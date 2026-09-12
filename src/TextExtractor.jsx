@@ -1,0 +1,24 @@
+import { useRef, useState } from 'react'
+import { ArrowLeft, Download, FileText, LoaderCircle, Upload } from 'lucide-react'
+import { createWorker } from 'tesseract.js'
+
+const MAX = 100
+const accepted = file => ['image/png', 'image/jpeg'].includes(file.type)
+const saveText = (content, name, type) => { const blob = new Blob([content], { type }); const url = URL.createObjectURL(blob); const a = document.createElement('a'); a.href = url; a.download = name; a.click(); setTimeout(() => URL.revokeObjectURL(url), 1000) }
+
+export default function TextExtractor({ onBack }) {
+  const [files, setFiles] = useState([]); const [results, setResults] = useState([]); const [busy, setBusy] = useState(false); const [progress, setProgress] = useState(0); const [error, setError] = useState(''); const input = useRef(null)
+  const addFiles = list => { const next = Array.from(list).filter(accepted).slice(0, MAX - files.length); setFiles(items => [...items, ...next]); setResults(items => [...items, ...next.map(file => ({ name: file.name, text: '', confidence: null }))]); setError('') }
+  const extract = async () => { if (!files.length) return; setBusy(true); setError(''); setProgress(0); const worker = await createWorker('eng'); try { for (let i = 0; i < files.length; i += 1) { const result = await worker.recognize(files[i]); setResults(items => items.map((item, index) => index === i ? { ...item, text: result.data.text.trim(), confidence: Math.round(result.data.confidence) } : item)); setProgress(i + 1) } } catch (ocrError) { setError(ocrError.message || 'Text extraction failed.') } finally { await worker.terminate(); setBusy(false) } }
+  const updateText = (index, text) => setResults(items => items.map((item, i) => i === index ? { ...item, text } : item))
+  const exportRows = results.map(item => ({ filename: item.name, text: item.text, confidence: item.confidence ?? '' }))
+  const exportCsv = () => saveText(['filename,text,confidence', ...exportRows.map(row => [row.filename, row.text, row.confidence].map(value => `"${String(value).replaceAll('"', '""')}"`).join(','))].join('\n'), 'extracted-text.csv', 'text/csv')
+  const handleDrop = event => { event.preventDefault(); event.stopPropagation(); addFiles(event.dataTransfer.files) }
+  return <section className="extractor-screen" onDrop={handleDrop} onDragOver={event => { event.preventDefault(); event.dataTransfer.dropEffect = 'copy' }}>
+    <div className="eyebrow"><span className="eyebrow-line" /> TEXT EXTRACTOR</div>
+    <div className="intro-row"><div><h1>Read your <em>cropped images.</em></h1><p className="subtitle">Extract text locally from up to 100 PNG or JPEG images.</p></div><button className="back-link" onClick={onBack}><ArrowLeft size={16} /> Choose another action</button></div>
+    <div className="editor-toolbar"><button className="go-button" onClick={() => input.current?.click()}><Upload size={16} /> Upload cropped images</button><input ref={input} hidden type="file" accept=".png,.jpg,.jpeg,image/png,image/jpeg" multiple onChange={event => addFiles(event.target.files)} /><span className="editor-count">{files.length} / 100 images</span><button className="secondary-button inline" disabled={!results.length} onClick={() => saveText(JSON.stringify(exportRows, null, 2), 'extracted-text.json', 'application/json')}><Download size={15} /> JSON</button><button className="secondary-button inline" disabled={!results.length} onClick={exportCsv}><Download size={15} /> CSV</button><button className="secondary-button inline" disabled={!results.length} onClick={() => saveText(results.map(item => `${item.name}\n${item.text}`).join('\n\n'), 'extracted-text.txt', 'text/plain')}><Download size={15} /> TXT</button></div>
+    {!files.length ? <div className="editor-empty" onClick={() => input.current?.click()}><FileText size={28} /><strong>Drop your cropped images here or browse</strong><small>PNG and JPEG only · OCR runs locally in this browser</small></div> : <><div className="extract-actions"><button className="go-button" disabled={busy} onClick={extract}>{busy ? <><LoaderCircle size={16} className="spin" /> Extracting {progress} of {files.length}…</> : <><FileText size={16} /> Extract text from all</>}</button><button className="secondary-button inline" onClick={() => { setFiles([]); setResults([]); setProgress(0) }}>Clear</button></div><div className="extract-list">{results.map((item, index) => <div className="extract-row" key={`${item.name}-${index}`}><div className="extract-meta"><strong>{item.name}</strong><span>{item.confidence == null ? 'Not processed' : `${item.confidence}% confidence`}</span></div><textarea value={item.text} onChange={event => updateText(index, event.target.value)} placeholder="Extracted text will appear here…" /></div>)}</div></>}
+    {error && <p className="form-error">{error}</p>}
+  </section>
+}
